@@ -66,7 +66,7 @@ def process_date_chunk(lat_str, latitude, date_chunk, total_result):
     is_southern = float(lat_str) < 0
     
     local_result = np.zeros_like(total_result)
-    
+    # print(f"开始处理日期块: {date_chunk}")
     for date_idx, date in date_chunk:
         try:
             sunrise, sunset = get_sunrise_sunset(obs, date)
@@ -75,7 +75,7 @@ def process_date_chunk(lat_str, latitude, date_chunk, total_result):
 
             sunrise_jd = float(sunrise)
             sunset_jd = float(sunset)
-            step = 1.0 / 1440  # 1分钟
+            step = 10.0 / 1440  # 1分钟
             
             current_jd = sunrise_jd
             while current_jd <= sunset_jd:
@@ -159,16 +159,30 @@ def process_latitude(lat_info):
         for future in futures:
             future.result()
     
-    # 查找最佳参数
-    max_index = np.unravel_index(total_result.argmax(), total_result.shape)
-    best_angle = angles_degrees[max_index[1]]
-    best_spacing = panel_spacings[max_index[0]]
-    max_value = total_result[max_index]
+    # 查找每个板间距对应的最佳角度和结果
+    best_angles = []
+    best_results = []
+    for ps_idx in range(len(panel_spacings)):
+        max_index = np.argmax(total_result[ps_idx])
+        best_angle = angles_degrees[max_index]
+        best_angles.append(best_angle)
+        best_results.append(total_result[ps_idx, max_index])
+    
+    # 查找全局最大结果以及对应的板间距和角度
+    global_max_index = np.unravel_index(np.argmax(total_result), total_result.shape)
+    best_spacing = panel_spacings[global_max_index[0]]
+    best_angle_global = angles_degrees[global_max_index[1]]
+    max_value = total_result[global_max_index]
     
     with print_lock:
-        print(f"纬度 {latitude}° 完成 | 角度: {best_angle:.1f} 间距: {best_spacing:.1f} 能量: {max_value:.2f}")
+        print(f"纬度 {latitude}° 完成 | 最佳角度列表: {[f'{angle:.1f}' for angle in best_angles]}")
     
-    return [latitude, best_angle, best_spacing, max_value]
+    result = [latitude]
+    for i in range(len(panel_spacings)):
+        result.extend([best_angles[i], best_results[i]])
+    result.extend([best_spacing, best_angle_global, max_value])
+    
+    return result
 
 def main():
     # 生成纬度任务列表
@@ -179,8 +193,14 @@ def main():
     for lat_info in latitudes:
         results.append(process_latitude(lat_info))
     
+    # 构建列名
+    columns = ['纬度']
+    for ps in panel_spacings:
+        columns.extend([f'最佳角度_板间距_{ps:.1f}', f'最佳结果_板间距_{ps:.1f}'])
+    columns.extend(['最佳板间距', '最佳角度', '最大累积值'])
+    
     # 保存结果
-    df = pd.DataFrame(results, columns=['纬度', '最佳角度', '最佳板间距', '最大累积值'])
+    df = pd.DataFrame(results, columns=columns)
     with pd.ExcelWriter('单纬度并行优化结果.xlsx') as writer:
         df.to_excel(writer, index=False)
 
